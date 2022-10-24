@@ -48,10 +48,12 @@ def AdvCheck():
     # store all the good matches as per Lowe's ratio test.
 
     good = []
+    total = []
     for m,n in matches:
+        total.append(m)
         if m.distance < 0.7*n.distance:
             good.append(m)
-    if len(good)>MIN_MATCH_COUNT: #10개 이상이 일치하면 Okay
+    if len(good)/len(total)*100>MIN_MATCH_COUNT: #10% 이상이 일치하면 Okay
         src_pts = np.float32([ kp1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
         dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
         M, mask = cv.findHomography(src_pts, dst_pts, cv.RANSAC,5.0)
@@ -103,7 +105,7 @@ def Update():
 
     return "Update Success"
     
-    
+
 @app.route('/mypage', methods=['POST'])
 @cross_origin()
 def FetchData():
