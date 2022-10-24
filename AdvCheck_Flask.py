@@ -3,7 +3,12 @@ from flask_cors import CORS, cross_origin
 import numpy as np
 import cv2 as cv
 from matplotlib import pyplot as plt
-import json
+import datetime
+import pymysql
+
+db = pymysql.connect(host="localhost", user="root", passwd="1234", db="free_board", charset="utf8")
+cursor = db.cursor()
+
 MIN_MATCH_COUNT = 10
 
 app = Flask(__name__)
@@ -17,21 +22,14 @@ def AdvCheck():
     #     data = f.read()
     
     #*** data가 들어갈 자리에 사용자가 찍은 이미지를 byte로 읽고 JSON에 byteString을 담아서 주면됨!!! ****
-    # print(request)
-    # req = request.get_json()
-    # print(req)
-    # data = req['file']
-    # # data = request.data
-
-    # print(data)
-    # print(type(data))
     data = request.files['file']
     print(type(data), ":", data)
     data_str = data.read()
     #byte 단위 이미지를 cv에 읽히기
     encoded_img = np.fromstring(data_str, dtype = np.uint8)
     print(type(encoded_img))
-    img1 = cv.imdecode(encoded_img, 0) # 사용자가 찍은 이미지 
+    img1 = cv.imdecode(encoded_img, 0) # 사용자가 찍은 이미지
+    img1 = cv.normalize(img1, None, 0, 255, cv.NORM_MINMAX).astype('uint8') 
     #cv2.CV_LOAD_IMAGE_UNCHANGED                   
     img2 = cv.imread('test.png',0) # 광고 원본
 
@@ -74,12 +72,54 @@ def AdvCheck():
         print(type(match_result))
         # plt.imshow(img3, 'gray'),plt.show() #보여줄 땐 pyplot으로
         # match_result를 json에 담아서 jsonify 하면 됨
-        return jsonify({'match':str(match_result)})
+        # return jsonify({'match':str(match_result)})
+        return "True"
     else:
         print("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
         return "Not enough matches are found"
         # matchesMask = None
 
+
+@app.route('/update', methods=['POST'])
+@cross_origin()
+def Update():
+    req = request.get_json()
+    uid = req["uid"]
+    time = str(datetime.datetime.now())
+
+    db=db.connection()
+    query_insert = '''
+    INSERT INTO user_log (uid, time, point) VALUES(%d, '%s', %d);
+    ''' % (uid, time, 2)
+
+    query_update = '''
+    UPDATE user_point SET point=point+1 WHERE uid='%s';
+    ''' % (uid)
+    
+    cursor.execute(query_insert)
+    cursor.execute(query_update)
+    
+    db.commit()
+
+    return "Update Success"
+    
+    
+@app.route('/mypage', methods=['POST'])
+@cross_origin()
+def FetchData():
+    req = request.get_json()
+    uid = req["uid"]
+
+    db=db.connection()
+    query_select = '''
+    SELECT uid, COUNT(point) FROM user_log WHERE uid = "%s" GROUP BY uid;
+    ''' % (uid)
+    
+    cursor.execute(query_select)
+    
+    result = cursor.fetchall()
+
+    return result
     
 
 if __name__ == '__main__':
