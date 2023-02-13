@@ -74,13 +74,16 @@ def adv_check(adv_name):
         if m.distance < 0.7*n.distance:
             good.append(m)
     if len(good)/len(total)*100>MIN_MATCH_COUNT: #10% 이상이 일치하면 Kafka Produce
-        store_data = {'location':{'latitude':lat,'longitude':lon},'name':adv_name}
+        store_data = {'success':True,'location':{'latitude':lat,'longitude':lon},'name':adv_name}
         val = jsonify(store_data)
         producer.send('opencv',value=val)
         producer.flush()
         return "True"
     else:
-        print("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
+        store_data = {'success':False,'location':{'latitude':lat,'longitude':lon},'name':adv_name}
+        val = jsonify(store_data)
+        producer.send('opencv',value=val)
+        producer.flush()
         return "Not enough matches are found"
         # matchesMask = None
 
