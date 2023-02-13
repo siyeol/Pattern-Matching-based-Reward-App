@@ -41,7 +41,12 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future getImage() async {
     var image = await ImagePicker.pickImage(source: ImageSource.camera);
-    _uploadFile(image);
+
+    Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    String lat = position.latitude.toString();
+    String lon = position.longitude.toString();
+
+    _uploadFile(image, lat, lon);
 
     setState(() {
       _image = image;
@@ -49,7 +54,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   // Methode for file upload
-  void _uploadFile(filePath) async {
+  void _uploadFile(filePath, lat, lon) async {
     // Get base file name
     String fileName = basename(filePath.path);
     print("File base name: $fileName");
@@ -61,6 +66,10 @@ class _MyHomePageState extends State<MyHomePage> {
           filename: fileName,
           // contentType: MediaType('type', 'subtype'), //important
         ),
+        "location" : {
+          "latitude": lat,
+          "longitude": lon
+        }
       });
       print(data);
 

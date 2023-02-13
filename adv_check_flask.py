@@ -5,29 +5,34 @@ import cv2 as cv
 from matplotlib import pyplot as plt
 import datetime
 import pymysql
+from kafka import KafkaProducer 
 
 db = pymysql.connect(host="localhost", user="root", passwd="1234", db="free_board", charset="utf8")
 cursor = db.cursor()
 
 MIN_MATCH_COUNT = 10
 
+producer=KafkaProducer(acks=0, #메시지 받은 사람이 메시지를 잘 받았는지 체크하는 옵션 (0은 그냥 보내기만 한다. 확인x)
+    compression_type='gzip', #메시지 전달할 때 압축
+    api_version=(0,11,5),
+    bootstrap_servers=['localhost:9092'], #전달하고자하는 카프카 브로커의 위치
+    value_serializer=lambda x: dumps(x).encode('utf-8')
+)
+
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/', methods=['POST'])
+@app.route('/validate/<adv_name>', methods=['POST'])
 @cross_origin()
-def AdvCheck():
-    # path = './rabbit_choi.png'
-    # with open(path, 'rb') as f:
-    #     data = f.read()
-    
+def adv_check(adv_name):
+    lat = request.files['location']['latitude']
+    lon = request.files['file']['longitude']
+
     #*** data가 들어갈 자리에 사용자가 찍은 이미지를 byte로 읽고 JSON에 byteString을 담아서 주면됨!!! ****
     data = request.files['file']
-    print(type(data), ":", data)
     data_str = data.read()
     #byte 단위 이미지를 cv에 읽히기
     encoded_img = np.fromstring(data_str, dtype = np.uint8)
-    print(type(encoded_img))
     img1 = cv.imdecode(encoded_img, 0) # 사용자가 찍은 이미지
     img1 = cv.normalize(img1, None, 0, 255, cv.NORM_MINMAX).astype('uint8') 
     #cv2.CV_LOAD_IMAGE_UNCHANGED                   
@@ -37,8 +42,8 @@ def AdvCheck():
     sift = cv.SIFT_create()
 
     # find the keypoints and descriptors with SIFT
-    kp1, des1 = sift.detectAndCompute(img1,None)
-    kp2, des2 = sift.detectAndCompute(img2,None)
+    _, des1 = sift.detectAndCompute(img1,None)
+    _, des2 = sift.detectAndCompute(img2,None)
     FLANN_INDEX_KDTREE = 1
     index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
     search_params = dict(checks = 50)
@@ -46,35 +51,17 @@ def AdvCheck():
     matches = flann.knnMatch(des1,des2,k=2)
 
     # store all the good matches as per Lowe's ratio test.
-
     good = []
     total = []
     for m,n in matches:
         total.append(m)
         if m.distance < 0.7*n.distance:
             good.append(m)
-    if len(good)/len(total)*100>MIN_MATCH_COUNT: #10% 이상이 일치하면 Okay
-        src_pts = np.float32([ kp1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-        dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
-        M, mask = cv.findHomography(src_pts, dst_pts, cv.RANSAC,5.0)
-        matchesMask = mask.ravel().tolist()
-        h,w = img1.shape
-        pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-        dst = cv.perspectiveTransform(pts,M)
-        img2 = cv.polylines(img2,[np.int32(dst)],True,255,3, cv.LINE_AA)
-        print("Image match found!")
-        draw_params = dict(matchColor = (0,255,0), # draw matches in green color
-                        singlePointColor = None,
-                        matchesMask = matchesMask, # draw only inliers
-                        flags = 2)
-
-        img3 = cv.drawMatches(img1,kp1,img2,kp2,good,None,**draw_params)
-        print(type(img3))
-        match_result = cv.imencode('.jpg',img3)[1].tobytes()
-        print(type(match_result))
-        # plt.imshow(img3, 'gray'),plt.show() #보여줄 땐 pyplot으로
-        # match_result를 json에 담아서 jsonify 하면 됨
-        # return jsonify({'match':str(match_result)})
+    if len(good)/len(total)*100>MIN_MATCH_COUNT: #10% 이상이 일치하면 Kafka Produce
+        store_data = {'location':{'latitude':lat,'longitude':lon},'name':adv_name}
+        val = jsonify(store_data)
+        producer.send('opencv',value=val)
+        producer.flush()
         return "True"
     else:
         print("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
@@ -84,7 +71,7 @@ def AdvCheck():
 
 @app.route('/update', methods=['POST'])
 @cross_origin()
-def Update():
+def update():
     req = request.get_json()
     uid = req["uid"]
     time = str(datetime.datetime.now())
@@ -108,7 +95,7 @@ def Update():
 
 @app.route('/mypage', methods=['POST'])
 @cross_origin()
-def FetchData():
+def fetch_mypage():
     req = request.get_json()
     uid = req["uid"]
 
