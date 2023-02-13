@@ -5,10 +5,10 @@ import cv2 as cv
 from matplotlib import pyplot as plt
 import datetime
 import pymysql
-from kafka import KafkaProducer 
+from kafka import KafkaProducer, KafkaConsumer
+from pymongo import MongoClient
+from json import dumps, loads
 
-db = pymysql.connect(host="localhost", user="root", passwd="1234", db="free_board", charset="utf8")
-cursor = db.cursor()
 
 MIN_MATCH_COUNT = 10
 
@@ -18,6 +18,22 @@ producer=KafkaProducer(acks=0, #메시지 받은 사람이 메시지를 잘 받�
     bootstrap_servers=['localhost:9092'], #전달하고자하는 카프카 브로커의 위치
     value_serializer=lambda x: dumps(x).encode('utf-8')
 )
+
+consumer = KafkaConsumer(
+    'opencv',
+    bootstrap_servers=['localhost:9092'],
+    auto_offset_reset='earliest',
+    enable_auto_commit=True,
+    group_id=None,
+    value_deserializer=lambda x: loads(x.decode('utf-8'))
+)
+
+client = MongoClient('localhost:27017')
+collection = client.cash_hunter.match_log
+
+db = pymysql.connect(host="localhost", user="root", passwd="1234", db="free_board", charset="utf8")
+cursor = db.cursor()
+
 
 app = Flask(__name__)
 CORS(app)
@@ -67,6 +83,15 @@ def adv_check(adv_name):
         print("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
         return "Not enough matches are found"
         # matchesMask = None
+
+
+@app.route('/dbsave/mongo', methods=['GET'])
+@cross_origin()
+def save_mongo():
+    for message in consumer:
+        collection.insert_one(message)
+
+    return "Kafka Q saved to mongo"
 
 
 @app.route('/update', methods=['POST'])
