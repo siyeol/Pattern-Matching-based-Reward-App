@@ -1,16 +1,22 @@
 from flask import Flask, Response, request, jsonify, make_response
 from flask_cors import CORS, cross_origin
 import numpy as np
+from json import dumps, loads
+
 import cv2 as cv
 from matplotlib import pyplot as plt
 import datetime
+
 import pymysql
 from kafka import KafkaProducer, KafkaConsumer
 from pymongo import MongoClient
-from json import dumps, loads
 
+from resource_log import ResourceLogger
 
 MIN_MATCH_COUNT = 10
+
+app = Flask(__name__)
+CORS(app)
 
 producer=KafkaProducer(acks=0, #메시지 받은 사람이 메시지를 잘 받았는지 체크하는 옵션 (0은 그냥 보내기만 한다. 확인x)
     compression_type='gzip', #메시지 전달할 때 압축
@@ -35,8 +41,6 @@ db = pymysql.connect(host="localhost", user="root", passwd="1234", db="free_boar
 cursor = db.cursor()
 
 
-app = Flask(__name__)
-CORS(app)
 
 @app.route('/validate/<adv_name>', methods=['POST'])
 @cross_origin()
@@ -140,4 +144,6 @@ def fetch_mypage():
     
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000)
+    resource_logger = ResourceLogger('localhost:9200')
+    resource_logger.start_scheduler()
+    app.run(host="0.0.0.0", port=5001)
