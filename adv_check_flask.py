@@ -1,19 +1,21 @@
 from flask import Flask, Response, request, jsonify, make_response
 from flask_cors import CORS, cross_origin
+from kafka import KafkaProducer, KafkaConsumer
+import pymysql
+from pymongo import MongoClient
+from elasticsearch import Elasticsearch
+
 import numpy as np
 from json import dumps, loads
 import os
+from threading import Thread
 from dotenv import load_dotenv
-
 import cv2 as cv
 from matplotlib import pyplot as plt
 import datetime
 
-import pymysql
-from kafka import KafkaProducer, KafkaConsumer
-from pymongo import MongoClient
-
 from resource_log import ResourceLogger
+
 
 MIN_MATCH_COUNT = 10
 
@@ -25,15 +27,6 @@ producer=KafkaProducer(acks=0, #메시지 받은 사람이 메시지를 잘 받�
     api_version=(0,11,5),
     bootstrap_servers=['localhost:9092'], #전달하고자하는 카프카 브로커의 위치
     value_serializer=lambda x: dumps(x).encode('utf-8')
-)
-
-consumer = KafkaConsumer(
-    'opencv',
-    bootstrap_servers=['localhost:9092'],
-    auto_offset_reset='earliest',
-    enable_auto_commit=True,
-    group_id=None,
-    value_deserializer=lambda x: loads(x.decode('utf-8'))
 )
 
 client = MongoClient('localhost:27017')
@@ -102,10 +95,22 @@ def adv_check(adv_name):
 @app.route('/dbsave/mongo', methods=['GET'])
 @cross_origin()
 def save_mongo():
+    consumer = KafkaConsumer(
+        'opencv',
+        bootstrap_servers=['localhost:9092'],
+        auto_offset_reset='earliest',
+        enable_auto_commit=True,
+        group_id=None,
+        value_deserializer=lambda x: loads(x.decode('utf-8'))
+    )
+
     for message in consumer:
         collection.insert_one(message)
 
     return "Kafka Q saved to mongo"
+
+
+#MySQL
 
 def get_db_connection():
     return pymysql.connect(**db_config)
@@ -166,7 +171,39 @@ def fetch_mypage():
     return jsonify(result)
     
 
+# Elasticsearch function
+def save_to_elasticsearch(es, index, body):
+    es.index(index=index, body=body)
+
+
+# Kafka Consumer function
+def consume_and_save_to_elasticsearch(kafka_bootstrap_servers, elasticsearch_hosts):
+    es = Elasticsearch(hosts=elasticsearch_hosts)
+
+    consumer = KafkaConsumer(
+        'system-metrics',
+        bootstrap_servers=kafka_bootstrap_servers,
+        auto_offset_reset='earliest',
+        enable_auto_commit=True,
+        group_id='my-group',
+        value_deserializer=lambda x: loads(x.decode('utf-8'))
+    )
+
+    for message in consumer:
+        log_record = message.value
+        save_to_elasticsearch(es, 'system-metrics', log_record)
+
+
+# Start the Kafka Consumer in a separate thread
+def start_consumer_thread():
+    kafka_bootstrap_servers = ['localhost:9092']
+    elasticsearch_hosts = ['localhost:9200']
+    consumer_thread = Thread(target=consume_and_save_to_elasticsearch, args=(kafka_bootstrap_servers, elasticsearch_hosts))
+    consumer_thread.start()
+
+
 if __name__ == '__main__':
-    resource_logger = ResourceLogger('localhost:9200')
+    resource_logger = ResourceLogger(kafka_bootstrap_servers=['localhost:9092'])
     resource_logger.start_scheduler()
+    start_consumer_thread()
     app.run(host="0.0.0.0", port=5001)

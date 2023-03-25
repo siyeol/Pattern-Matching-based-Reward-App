@@ -1,27 +1,23 @@
 import logging
-from logging.handlers import SocketHandler
 import psutil
-import json
 from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from pythonjsonlogger import jsonlogger
-
-from elasticsearch import Elasticsearch
+from kafka import KafkaProducer
+from json import dumps
 
 class ResourceLogger():
-    def __init__(self, elasticsearch_host):
+    def __init__(self, kafka_bootstrap_servers):
         # Configure logger
-        self.logger = logging.getLogger("flask-elk")
+        self.logger = logging.getLogger("flask-kafka")
         logging.basicConfig(filename='app.log', level=logging.DEBUG)
 
-        socket_handler = SocketHandler("localhost", 5001)
-        formatter = jsonlogger.JsonFormatter("%(asctime)s - %(levelname)s - %(message)s")
-        socket_handler.setFormatter(formatter)
-        self.logger.addHandler(socket_handler)
-
-        self.es = Elasticsearch(hosts=[elasticsearch_host])
+        # Configure Kafka producer
+        self.producer = KafkaProducer(
+            bootstrap_servers=kafka_bootstrap_servers,
+            value_serializer=lambda x: dumps(x).encode('utf-8')
+        )
 
     def log_system_metrics(self):
         cpu_percent = psutil.cpu_percent()
@@ -32,11 +28,15 @@ class ResourceLogger():
         self.logger.info(f"CPU Usage: {cpu_percent}%")
         self.logger.info(f"Memory Usage: {memory_percent}%")
 
-        self.es.index(index='system-metrics', body={
+        log_message = {
+            '@timestamp': current_time,
             'cpu_percent': cpu_percent,
-            'mem_percent': memory_percent,
-            '@timestamp': current_time
-        })
+            'mem_percent': memory_percent
+        }
+
+        self.producer.send('system-metrics', value=log_message)
+        self.producer.flush()
+
 
     def start_scheduler(self):
         scheduler = BackgroundScheduler()
