@@ -2,6 +2,8 @@ from flask import Flask, Response, request, jsonify, make_response
 from flask_cors import CORS, cross_origin
 import numpy as np
 from json import dumps, loads
+import os
+from dotenv import load_dotenv
 
 import cv2 as cv
 from matplotlib import pyplot as plt
@@ -37,10 +39,15 @@ consumer = KafkaConsumer(
 client = MongoClient('localhost:27017')
 collection = client.cash_hunter.match_log
 
-db = pymysql.connect(host="localhost", user="root", passwd="1234", db="free_board", charset="utf8")
-cursor = db.cursor()
+load_dotenv()
 
-
+db_config = {
+    'host': os.environ.get('DB_HOST'),
+    'user': os.environ.get('DB_USER'),
+    'passwd': os.environ.get('DB_PASSWORD'),
+    'db': os.environ.get('DB_NAME'),
+    'charset': os.environ.get('DB_CHARSET')
+}
 
 @app.route('/validate/<adv_name>', methods=['POST'])
 @cross_origin()
@@ -100,6 +107,8 @@ def save_mongo():
 
     return "Kafka Q saved to mongo"
 
+def get_db_connection():
+    return pymysql.connect(**db_config)
 
 @app.route('/update', methods=['POST'])
 @cross_origin()
@@ -108,39 +117,53 @@ def update():
     uid = req["uid"]
     time = str(datetime.datetime.now())
 
-    db=db.connection()
+    connection = get_db_connection()
+    cursor = connection.cursor()
+
     query_insert = '''
-    INSERT INTO user_log (uid, time, point) VALUES(%d, '%s', %d);
-    ''' % (uid, time, 2)
+    INSERT INTO user_log (uid, time, point) VALUES(%s, %s, %s);
+    '''
 
     query_update = '''
-    UPDATE user_point SET point=point+1 WHERE uid='%s';
-    ''' % (uid)
-    
-    cursor.execute(query_insert)
-    cursor.execute(query_update)
-    
-    db.commit()
+    UPDATE user_point SET point=point+1 WHERE uid=%s;
+    '''
+
+    try:
+        cursor.execute(query_insert, (uid, time, 2))
+        cursor.execute(query_update, (uid,))
+        connection.commit()
+    except Exception as e:
+        connection.rollback()
+        return str(e), 500
+    finally:
+        cursor.close()
+        connection.close()
 
     return "Update Success"
     
 
 @app.route('/mypage', methods=['POST'])
-@cross_origin()
 def fetch_mypage():
     req = request.get_json()
     uid = req["uid"]
 
-    db=db.connection()
-    query_select = '''
-    SELECT uid, COUNT(point) FROM user_log WHERE uid = "%s" GROUP BY uid;
-    ''' % (uid)
-    
-    cursor.execute(query_select)
-    
-    result = cursor.fetchall()
+    connection = get_db_connection()
+    cursor = connection.cursor()
 
-    return result
+    query_select = '''
+    SELECT uid, COUNT(point) FROM user_log WHERE uid = %s GROUP BY uid;
+    '''
+
+    try:
+        cursor.execute(query_select, (uid,))
+        result = cursor.fetchall()
+    except Exception as e:
+        return str(e), 500
+    finally:
+        cursor.close()
+        connection.close()
+
+    return jsonify(result)
     
 
 if __name__ == '__main__':
