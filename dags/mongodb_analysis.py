@@ -1,21 +1,9 @@
-from datetime import datetime, timedelta
-import os
-from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
 
 from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
-from pymongo import MongoClient, GEOSPHERE
-import pymysql
+from pymongo import MongoClient, GEOSPHERE, UpdateOne
 
-load_dotenv()
-
-db_config = {
-    'host': os.environ.get('DB_HOST'),
-    'user': os.environ.get('DB_USER'),
-    'passwd': os.environ.get('DB_PASSWORD'),
-    'db': os.environ.get('DB_NAME'),
-    'charset': os.environ.get('DB_CHARSET')
-}
 
 def calculate_success_rate(success_counts, failure_counts):
     success_rate = {}
@@ -30,12 +18,19 @@ def advanced_analyze_mongodb_data():
     client = MongoClient('localhost:27017')
     collection = client.cash_hunter.match_log
 
+    # Filter to consider only the past week
+    one_week_ago = datetime.now(timezone.utc) - timedelta(days=6)
+
+    base_pipeline = [
+        {'$match': {'timestamp': {'$gte': one_week_ago}}}
+    ]
+
     # Calculate success rate per advertisement
-    adv_success_counts = collection.aggregate([
+    adv_success_counts = collection.aggregate(base_pipeline + [
         {'$match': {'success': True}},
         {'$group': {'_id': '$name', 'count': {'$sum': 1}}}
     ])
-    adv_failure_counts = collection.aggregate([
+    adv_failure_counts = collection.aggregate(base_pipeline + [
         {'$match': {'success': False}},
         {'$group': {'_id': '$name', 'count': {'$sum': 1}}}
     ])
@@ -117,26 +112,30 @@ def advanced_analyze_mongodb_data():
         'matches_per_day': matches_per_day
     }
 
-
-def save_analysis_results_to_mysql(results):
-    connection = pymysql.connect(**db_config)
-    cursor = connection.cursor()
+def save_analysis_results_to_mongodb(results):
+    client = MongoClient('localhost:27017')
+    db = client.analysis_data
 
     # Save success_rate_per_adv
-    for adv_name, rate in results['success_rate_per_adv'].items():
-        cursor.execute("INSERT INTO success_rate_per_adv (adv_name, rate) VALUES (%s, %s)", (adv_name, rate))
+    success_rate_per_adv_bulk = [
+        UpdateOne({'adv_name': adv_name}, {'$set': {'rate': rate}}, upsert=True)
+        for adv_name, rate in results['success_rate_per_adv'].items()
+    ]
+    db.success_rate_per_adv.bulk_write(success_rate_per_adv_bulk)
 
     # Save average_success_rate_per_location
-    for location, rate in results['average_success_rate_per_location'].items():
-        cursor.execute("INSERT INTO avg_success_rate_per_location (location, rate) VALUES (%s, %s)", (location, rate))
+    avg_success_rate_per_location_bulk = [
+        UpdateOne({'location': location}, {'$set': {'rate': rate}}, upsert=True)
+        for location, rate in results['average_success_rate_per_location'].items()
+    ]
+    db.avg_success_rate_per_location.bulk_write(avg_success_rate_per_location_bulk)
 
     # Save matches_per_day
-    for day, count in results['matches_per_day'].items():
-        cursor.execute("INSERT INTO matches_per_day (day, count) VALUES (%s, %s)", (day, count))
-
-    connection.commit()
-    cursor.close()
-    connection.close()
+    matches_per_day_bulk = [
+        UpdateOne({'day': day}, {'$set': {'count': count}}, upsert=True)
+        for day, count in results['matches_per_day'].items()
+    ]
+    db.matches_per_day.bulk_write(matches_per_day_bulk)
 
 
 # Airflow DAG configuration
@@ -154,7 +153,7 @@ dag = DAG(
     'mongodb_analysis',
     default_args=default_args,
     description='MongoDB analysis DAG',
-    schedule_interval=timedelta(days=1),
+    schedule_interval=timedelta(weeks=1),
     catchup=False
 )
 
@@ -165,11 +164,11 @@ analyze_mongodb_data_task = PythonOperator(
     dag=dag
 )
 
-save_analysis_results_to_mysql_task = PythonOperator(
-    task_id='save_analysis_results_to_mysql',
-    python_callable=save_analysis_results_to_mysql,
+save_analysis_results_to_mongodb_task = PythonOperator(
+    task_id='save_analysis_results_to_mongodb',
+    python_callable=save_analysis_results_to_mongodb,
     op_args=['{{ ti.xcom_pull(task_ids="advanced_analyze_mongodb_data") }}'],
     dag=dag
 )
 
-analyze_mongodb_data_task >> save_analysis_results_to_mysql_task
+analyze_mongodb_data_task >> save_analysis_results_to_mongodb_task
