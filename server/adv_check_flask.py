@@ -11,8 +11,8 @@ import os
 from threading import Thread
 from dotenv import load_dotenv
 import cv2 as cv
-from matplotlib import pyplot as plt
-import datetime
+# from matplotlib import pyplot as plt
+from datetime import datetime
 
 from resource_log import ResourceLogger
 
@@ -105,7 +105,9 @@ def save_mongo():
     )
 
     for message in consumer:
-        collection.insert_one(message)
+        record = message.value
+        record['timestamp'] = datetime.utcnow()
+        collection.insert_one(record)
 
     return "Kafka Q saved to mongo"
 
