@@ -32,5 +32,4 @@
 - 데이터 관리 : RDBMS와 NoSQL의 용례를 분석하고 MySQL, MongoDB, ElasticSearch를 적용해 각각의 장점과 용도에 맞게 활용했습니다.
 
 ## 시스템 구조
-![image](https://user-images.githubusercontent.com/33966473/227839292-7f47b2de-d4ba-40c5-a99e-bfc74dbfbe03.png)
-
+![image](https://user-images.githubusercontent.com/33966473/227840530-0020a7e6-ef22-480e-af8e-5af7339de497.png)
